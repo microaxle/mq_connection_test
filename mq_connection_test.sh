@@ -294,8 +294,14 @@ discover_sender_channel() {
     [ -n "$ping_result" ] && [ "$ping_result" != "N/A" ] && \
         [ "$QUIET_MODE" != "true" ] && echo "  Ping Result: $ping_result" >&2
     
-    # Return channel name and ping result
-    echo "$channel|$ping_result"
+    # Determine if channel is running based on state
+    local channel_state="INACTIVE"
+    if [ -n "$chstate" ] && [ "$chstate" != "NOT ACTIVE" ] && [ "$chstate" != "NOT FOUND" ]; then
+        channel_state="RUNNING"
+    fi
+    
+    # Return channel name, ping result, and state
+    echo "$channel|$ping_result|$channel_state"
     return 0
 }
 
@@ -414,8 +420,14 @@ discover_receiver_channel() {
     [ -n "$ping_result" ] && [ "$ping_result" != "N/A" ] && \
         [ "$QUIET_MODE" != "true" ] && echo "  Ping Result: $ping_result" >&2
     
-    # Return channel name and ping result
-    echo "$rcvr_channel|$ping_result"
+    # Determine if channel is running based on state
+    local channel_state="INACTIVE"
+    if [ -n "$chstate" ] && [ "$chstate" != "NOT ACTIVE" ] && [ "$chstate" != "NOT FOUND" ]; then
+        channel_state="RUNNING"
+    fi
+    
+    # Return channel name, ping result, and state
+    echo "$rcvr_channel|$ping_result|$channel_state"
     return 0
 }
 
@@ -554,12 +566,14 @@ main() {
     # Step 3: Discover sender channel
     local sender_channel=""         # Sender channel name
     local sender_channel_ping=""     # Ping result for sender channel
+    local sender_channel_state=""    # Channel state (RUNNING/INACTIVE)
     if [ -n "$xmitq" ]; then
         local sender_result=$(discover_sender_channel "$qmgr" "$xmitq" 2>/dev/null || echo "")
         if [ -n "$sender_result" ]; then
-            # Parse result: format is "channel_name|ping_result"
+            # Parse result: format is "channel_name|ping_result|state"
             sender_channel=$(echo "$sender_result" | cut -d'|' -f1)
             sender_channel_ping=$(echo "$sender_result" | cut -d'|' -f2)
+            sender_channel_state=$(echo "$sender_result" | cut -d'|' -f3)
         fi
     fi
     
@@ -567,6 +581,7 @@ main() {
     local targetqmgr=""             # Target queue manager name
     local rcvr_channel=""           # Receiver channel name
     local rcvr_channel_ping=""      # Ping result for receiver channel
+    local rcvr_channel_state=""     # Channel state (RUNNING/INACTIVE)
     if [ -n "$sender_channel" ]; then
         # Get target queue manager
         targetqmgr=$(discover_target_qmgr "$qmgr" "$sender_channel" "$queue" 2>/dev/null || echo "")
@@ -577,9 +592,10 @@ main() {
             # Extract result from output (last line with pipe separator)
             rcvr_result=$(echo "$rcvr_result" | grep "|" | tail -1)
             if [ -n "$rcvr_result" ] && echo "$rcvr_result" | grep -q "|"; then
-                # Parse result: format is "channel_name|ping_result"
+                # Parse result: format is "channel_name|ping_result|state"
                 rcvr_channel=$(echo "$rcvr_result" | cut -d'|' -f1)
                 rcvr_channel_ping=$(echo "$rcvr_result" | cut -d'|' -f2)
+                rcvr_channel_state=$(echo "$rcvr_result" | cut -d'|' -f3)
             fi
         fi
     fi
@@ -630,8 +646,11 @@ main() {
     # Sender Channel
     if [ -n "$sender_channel" ]; then
         local sender_status="$sender_channel"
-        # Add ping result if available
-        if [ -n "$sender_channel_ping" ] && [ "$sender_channel_ping" != "N/A" ]; then
+        # Check if channel is running
+        if [ "$sender_channel_state" == "RUNNING" ]; then
+            sender_status="$sender_channel (Running)"
+        # Add ping result if channel is inactive
+        elif [ -n "$sender_channel_ping" ] && [ "$sender_channel_ping" != "N/A" ]; then
             if [ "$sender_channel_ping" == "GOOD" ]; then
                 sender_status="$sender_channel (Inactive, Ping: GOOD)"
             else
@@ -653,8 +672,11 @@ main() {
     # Receiver Channel
     if [ -n "$rcvr_channel" ]; then
         local rcvr_status="$rcvr_channel"
-        # Add ping result if available
-        if [ -n "$rcvr_channel_ping" ] && [ "$rcvr_channel_ping" != "N/A" ]; then
+        # Check if channel is running
+        if [ "$rcvr_channel_state" == "RUNNING" ]; then
+            rcvr_status="$rcvr_channel (Running)"
+        # Add ping result if channel is inactive
+        elif [ -n "$rcvr_channel_ping" ] && [ "$rcvr_channel_ping" != "N/A" ]; then
             if [ "$rcvr_channel_ping" == "GOOD" ]; then
                 rcvr_status="$rcvr_channel (Inactive, Ping: GOOD)"
             else
