@@ -1,0 +1,29 @@
+# MQ Connection Configuration
+# Add your queue manager connection details here
+
+queue_managers:
+  APEX.C1.MEM1:
+    host: "apex.c1.mem1.microaxle.lab"
+    port: 6002
+    channel: "ADMIN.SVRCONN"
+    user: ""
+    mode: "client"
+    ssl_cipher_spec: "ANY_TLS12_OR_HIGHER"
+    ssl_key_repository: "/home/adminjai/projects/mq_certs/client_certs/mq-explorer/mq-explorer"
+  APEX.C2.MEM1:
+    host: "apex.c2.mem1.microaxle.lab"
+    port: 7002
+    channel: "ADMIN.SVRCONN"
+    user: ""
+    mode: "client"
+    ssl_cipher_spec: "ANY_TLS12_OR_HIGHER"
+    ssl_key_repository: "/home/adminjai/projects/mq_certs/client_certs/mq-explorer/mq-explorer"
+  APEX.GW.QM:
+    host: "apex.gw.qm.microaxle.lab"
+    port: 5001
+    channel: "ADMIN.SVRCONN"
+    user: ""
+    mode: "client"
+    ssl_cipher_spec: "ANY_TLS12_OR_HIGHER"
+    ssl_key_repository: "/home/adminjai/projects/mq_certs/client_certs/mq-explorer/mq-explorer"
+  # OMNI.QM - External QMgr (no access, not in config)
