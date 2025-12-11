@@ -435,12 +435,13 @@ discover_receiver_channel() {
 # ============================================================================
 
 # Function: Send test message to queue and verify it was sent
-# Parameters: $1 = queue manager, $2 = queue name, $3 = transmission queue name
+# Parameters: $1 = queue manager, $2 = queue name, $3 = transmission queue name, $4 = custom message (optional)
 # Returns: "message|method|status" on success
 send_test_message() {
     local qmgr=$1
     local queue=$2
     local xmitq=$3
+    local custom_msg="$4"  # Optional custom message from user
     local target_queue="$queue"  # Default to sending to the queue itself
     
     print_info "Sending test message to queue: $queue"
@@ -453,9 +454,16 @@ send_test_message() {
     # Get queue depth before sending (to verify message was added)
     local depth_before=$(get_queue_depth "$qmgr" "$queue")
     
-    # Create test message with unique identifier and timestamp
-    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    local test_msg="MQ_TEST_MSG|$timestamp|Queue:$queue|QMgr:$qmgr"
+    # Create test message - use custom message if provided, otherwise use default
+    local test_msg=""
+    if [ -n "$custom_msg" ]; then
+        # Use user-provided custom message
+        test_msg="$custom_msg"
+    else
+        # Create default test message with unique identifier and timestamp
+        local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+        test_msg="MQ_TEST_MSG|$timestamp|Queue:$queue|QMgr:$qmgr"
+    fi
     
     local msg_sent=false  # Flag to track if message was sent
     local send_method=""  # Method used to send message
@@ -537,6 +545,7 @@ EOF
 # Parameters: Command line arguments
 main() {
     local send_test_msg=false  # Flag to control test message sending
+    local custom_message=""    # Custom message content from user
     local qmgr=""              # Queue manager name
     local queue=""             # Queue name
     
@@ -548,17 +557,30 @@ main() {
                 send_test_msg=true
                 shift
                 ;;
+            -m|--message)
+                # Custom message content
+                if [ -z "$2" ]; then
+                    echo "Error: -m/--message requires a message value"
+                    echo "Use -h or --help for usage information"
+                    exit 1
+                fi
+                custom_message="$2"
+                send_test_msg=true  # Automatically enable sending if message is provided
+                shift 2
+                ;;
             -h|--help)
                 # Show usage help
                 echo "Usage: $0 [OPTIONS] <queue_manager_name> <queue_name>"
                 echo ""
                 echo "Options:"
-                echo "  -s, --send    Send test message after discovery (default: disabled)"
-                echo "  -h, --help    Show this help message"
+                echo "  -s, --send              Send test message after discovery (default: disabled)"
+                echo "  -m, --message MESSAGE   Send custom message content (automatically enables -s)"
+                echo "  -h, --help              Show this help message"
                 echo ""
                 echo "Examples:"
                 echo "  $0 APEX.C1.MEM1 APEX.TO.OMNI.WIRE.REQ"
                 echo "  $0 -s APEX.C1.MEM1 APEX.TO.OMNI.WIRE.REQ"
+                echo "  $0 -m \"My custom message\" APEX.C1.MEM1 APEX.TO.OMNI.WIRE.REQ"
                 exit 0
                 ;;
             -*)
@@ -649,17 +671,28 @@ main() {
     local test_msg_content=""       # Content of test message
     
     if [ "$send_test_msg" = "true" ]; then
-        # Send test message only if -s/--send flag is provided
-        local test_msg_info=$(send_test_message "$qmgr" "$queue" "$xmitq" 2>/dev/null || \
+        # Send test message only if -s/--send flag is provided or custom message is given
+        local test_msg_info=$(send_test_message "$qmgr" "$queue" "$xmitq" "$custom_message" 2>/dev/null || \
             echo "FAILED|FAILED|FAILED")
         
         # Parse test message result
         # Format: "message|method|status"
+        # Note: Default message contains pipes, so we need to extract from the end
         if echo "$test_msg_info" | grep -q "|" && ! echo "$test_msg_info" | grep -q "^FAILED"; then
-            # Extract message content (first 4 fields separated by |)
-            test_msg_content=$(echo "$test_msg_info" | cut -d'|' -f1-4)
-            # Extract status (6th field)
-            local msg_status=$(echo "$test_msg_info" | cut -d'|' -f6)
+            # Extract status (last field - VERIFIED, SENT, or FAILED)
+            local msg_status=$(echo "$test_msg_info" | rev | cut -d'|' -f1 | rev)
+            # Extract method (second to last field)
+            local send_method_field=$(echo "$test_msg_info" | rev | cut -d'|' -f2 | rev)
+            # Extract message content (everything before the last two fields)
+            # Count total fields and extract all but last 2
+            local total_fields=$(echo "$test_msg_info" | tr '|' '\n' | wc -l)
+            local msg_fields=$((total_fields - 2))
+            if [ "$msg_fields" -gt 0 ]; then
+                test_msg_content=$(echo "$test_msg_info" | cut -d'|' -f1-$msg_fields)
+            else
+                test_msg_content=$(echo "$test_msg_info" | cut -d'|' -f1)
+            fi
+            
             if [ "$msg_status" = "VERIFIED" ] || [ "$msg_status" = "SENT" ]; then
                 test_msg_result="SUCCESS"
             else
