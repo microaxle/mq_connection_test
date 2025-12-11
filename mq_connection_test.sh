@@ -181,51 +181,50 @@ get_queue_depth() {
 # CHANNEL FUNCTIONS
 # ============================================================================
 
-# Function: Ping a channel (check if it's properly configured, without starting it)
+# Function: Ping a channel using MQ PING CHL command
 # Parameters: $1 = queue manager, $2 = channel name, $3 = channel type (SDR/RCVR)
-# Returns: 0 if channel is properly configured, 1 if not
+# Returns: 0 if ping successful, 1 if failed
+# Strategy: Use IBM MQ native PING CHL command to check channel connectivity
 ping_channel() {
     local qmgr=$1
     local channel=$2
-    local channel_type=$3  # SDR (sender) or RCVR (receiver)
+    local channel_type=$3  # SDR (sender) or RCVR (receiver) - not used but kept for compatibility
     
-    print_info "Pinging channel '$channel' (checking connectivity)..."
+    print_info "Pinging channel '$channel' using MQ PING CHL command..."
     
-    # Get channel definition to verify it exists and is configured
-    local chdef_output=$(echo "DISPLAY CHANNEL('$channel')" | runmqsc "$qmgr" 2>&1)
+    # Use IBM MQ native PING CHL command
+    # This command checks if the channel can be reached/connected
+    local ping_output=$(echo "PING CHL('$channel')" | runmqsc "$qmgr" 2>&1)
     
-    # Check if channel definition exists (look for error messages)
-    if echo "$chdef_output" | grep -qi "AMQ8144E.*not found\|AMQ8145E"; then
-        print_warning "Channel '$channel' definition not found"
-        return 1
-    fi
+    # Check for success indicators:
+    # 1. "Channel is in use" (AMQ9514E) - means channel exists and is active (good!)
+    # 2. Success messages (AMQ9xxxI)
+    # 3. "One MQSC command read" without syntax errors
     
-    # For sender channels, verify connection name is configured
-    if [ "$channel_type" == "SDR" ]; then
-        # Extract CONNAME attribute from channel definition
-        local connname=$(echo "$chdef_output" | grep "^   CONNAME(" | \
-            sed 's/.*CONNAME(//; s/)$//' | head -1)
-        if [ -z "$connname" ]; then
-            print_warning "Channel '$channel' has no connection name configured"
-            return 1
-        fi
-        print_success "Channel '$channel' ping successful (definition and connection configured)"
+    # "Channel is in use" is actually a good sign - channel exists and is active
+    if echo "$ping_output" | grep -qiE "AMQ9514E.*in use|Channel.*is in use"; then
+        print_success "Channel '$channel' ping successful (channel is in use/active)"
         return 0
     fi
     
-    # For receiver channels, just verify definition exists
-    if [ "$channel_type" == "RCVR" ]; then
-        if echo "$chdef_output" | grep -qi "CHANNEL($channel)"; then
-            print_success "Channel '$channel' ping successful (definition exists)"
-            return 0
-        else
-            print_warning "Channel '$channel' definition not properly configured"
+    # Check for explicit error messages that indicate channel doesn't exist or can't be pinged
+    if echo "$ping_output" | grep -qiE "AMQ8144E.*not found|AMQ8145E|Channel.*not found|AMQ.*E.*not found"; then
+        print_warning "Channel '$channel' ping failed (channel not found)"
+        return 1
+    fi
+    
+    # Check for other error messages
+    if echo "$ping_output" | grep -qiE "AMQ[0-9]+E"; then
+        # Check if it's a critical error (not just "in use")
+        if ! echo "$ping_output" | grep -qiE "in use|successfully"; then
+            print_warning "Channel '$channel' ping failed"
             return 1
         fi
     fi
     
-    # Default: channel definition exists
-    print_success "Channel '$channel' ping successful (definition exists)"
+    # If we get here, assume ping was successful
+    # Some MQ versions may return success without explicit messages
+    print_success "Channel '$channel' ping successful"
     return 0
 }
 
