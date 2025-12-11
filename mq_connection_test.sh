@@ -536,15 +536,60 @@ EOF
 # Function: Main execution function
 # Parameters: Command line arguments
 main() {
+    local send_test_msg=false  # Flag to control test message sending
+    local qmgr=""              # Queue manager name
+    local queue=""             # Queue name
+    
+    # Parse command line arguments
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -s|--send)
+                # Enable test message sending
+                send_test_msg=true
+                shift
+                ;;
+            -h|--help)
+                # Show usage help
+                echo "Usage: $0 [OPTIONS] <queue_manager_name> <queue_name>"
+                echo ""
+                echo "Options:"
+                echo "  -s, --send    Send test message after discovery (default: disabled)"
+                echo "  -h, --help    Show this help message"
+                echo ""
+                echo "Examples:"
+                echo "  $0 APEX.C1.MEM1 APEX.TO.OMNI.WIRE.REQ"
+                echo "  $0 -s APEX.C1.MEM1 APEX.TO.OMNI.WIRE.REQ"
+                exit 0
+                ;;
+            -*)
+                # Unknown option
+                echo "Error: Unknown option '$1'"
+                echo "Use -h or --help for usage information"
+                exit 1
+                ;;
+            *)
+                # Positional arguments (queue manager and queue name)
+                if [ -z "$qmgr" ]; then
+                    qmgr="$1"
+                elif [ -z "$queue" ]; then
+                    queue="$1"
+                else
+                    echo "Error: Too many arguments"
+                    echo "Use -h or --help for usage information"
+                    exit 1
+                fi
+                shift
+                ;;
+        esac
+    done
+    
     # Check if required arguments are provided
-    if [ $# -lt 2 ]; then
-        echo "Usage: $0 <queue_manager_name> <queue_name>"
-        echo "Example: $0 <QMGR_NAME> <QUEUE_NAME>"
+    if [ -z "$qmgr" ] || [ -z "$queue" ]; then
+        echo "Error: Queue manager name and queue name are required"
+        echo "Usage: $0 [OPTIONS] <queue_manager_name> <queue_name>"
+        echo "Use -h or --help for more information"
         exit 1
     fi
-    
-    local qmgr=$1      # Queue manager name from command line
-    local queue=$2     # Queue name from command line
     
     # Step 1: Check source queue manager exists and is running
     if ! check_qmgr "$qmgr" > /dev/null 2>&1; then
@@ -599,26 +644,33 @@ main() {
         fi
     fi
     
-    # Step 5: Send test message
+    # Step 5: Send test message (only if flag is set)
     local test_msg_result=""        # Result of test message send
     local test_msg_content=""       # Content of test message
-    local test_msg_info=$(send_test_message "$qmgr" "$queue" "$xmitq" 2>/dev/null || \
-        echo "FAILED|FAILED|FAILED")
     
-    # Parse test message result
-    # Format: "message|method|status"
-    if echo "$test_msg_info" | grep -q "|" && ! echo "$test_msg_info" | grep -q "^FAILED"; then
-        # Extract message content (first 4 fields separated by |)
-        test_msg_content=$(echo "$test_msg_info" | cut -d'|' -f1-4)
-        # Extract status (6th field)
-        local msg_status=$(echo "$test_msg_info" | cut -d'|' -f6)
-        if [ "$msg_status" = "VERIFIED" ] || [ "$msg_status" = "SENT" ]; then
-            test_msg_result="SUCCESS"
+    if [ "$send_test_msg" = "true" ]; then
+        # Send test message only if -s/--send flag is provided
+        local test_msg_info=$(send_test_message "$qmgr" "$queue" "$xmitq" 2>/dev/null || \
+            echo "FAILED|FAILED|FAILED")
+        
+        # Parse test message result
+        # Format: "message|method|status"
+        if echo "$test_msg_info" | grep -q "|" && ! echo "$test_msg_info" | grep -q "^FAILED"; then
+            # Extract message content (first 4 fields separated by |)
+            test_msg_content=$(echo "$test_msg_info" | cut -d'|' -f1-4)
+            # Extract status (6th field)
+            local msg_status=$(echo "$test_msg_info" | cut -d'|' -f6)
+            if [ "$msg_status" = "VERIFIED" ] || [ "$msg_status" = "SENT" ]; then
+                test_msg_result="SUCCESS"
+            else
+                test_msg_result="FAILED"
+            fi
         else
             test_msg_result="FAILED"
         fi
     else
-        test_msg_result="FAILED"
+        # Test message sending is disabled
+        test_msg_result="SKIPPED"
     fi
     
     # ========================================================================
@@ -694,6 +746,8 @@ main() {
         if [ -n "$test_msg_content" ]; then
             printf "%-25s %-50s\n" "Message Content:" "$test_msg_content"
         fi
+    elif [ "$test_msg_result" = "SKIPPED" ]; then
+        printf "%-25s %-50s\n" "Test Message:" "SKIPPED (use -s flag to send)"
     else
         printf "%-25s %-50s\n" "Test Message:" "FAILED"
     fi
@@ -702,10 +756,11 @@ main() {
     printf "\n"
     
     # Exit with appropriate code
-    if [ "$test_msg_result" = "SUCCESS" ]; then
-        exit 0
-    else
+    # Exit 0 for success or skipped, exit 1 only for failures
+    if [ "$test_msg_result" = "FAILED" ]; then
         exit 1
+    else
+        exit 0
     fi
 }
 
