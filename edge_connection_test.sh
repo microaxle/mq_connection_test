@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# Hardcoded amqsput options (these don't change)
+AMQSPUT_OPEN_OPTIONS=8208
+AMQSPUT_CLOSE_OPTIONS=0
+
 SYNC_MODE=false
 CUSTOM_MESSAGE=""
 
@@ -105,7 +109,7 @@ printf "%-25s %s\n" "Source QMgr:" "$source_qmgr"
 printf "%-25s %s\n" "Target Queue:" "$target_queue"
 printf "%-25s %s\n" "Target QMgr Name:" "$target_qmgr_name"
 printf "%-25s %s\n" "Actual Target QMgr:" "${rqmname:-Not found}"
-printf "%-25s %s\n" "amqsput Options:" "openOptions=8208, closeOptions=0"
+printf "%-25s %s\n" "amqsput Options:" "openOptions=$AMQSPUT_OPEN_OPTIONS, closeOptions=$AMQSPUT_CLOSE_OPTIONS"
 printf "%-25s %s\n" "Transmission Queue:" "${xmitq:-Not found} (Depth: $xmitq_depth)"
 printf "%-25s %s\n" "Sender Channel:" "${sender_channel:-Not found}"
 [ -n "$sender_channel" ] && printf "%-25s %s\n" "Sender Channel Status:" "$sender_status"
@@ -140,7 +144,7 @@ if [ "$SYNC_MODE" = "true" ]; then
     echo "Sending test message..."
     depth_before="$xmitq_depth"
     
-    printf "%s\n\n" "$test_msg" | "$amqsput_cmd" "$target_queue" "$source_qmgr" 8208 0 "$target_qmgr_name" > /dev/null 2>&1
+    printf "%s\n\n" "$test_msg" | "$amqsput_cmd" "$target_queue" "$source_qmgr" $AMQSPUT_OPEN_OPTIONS $AMQSPUT_CLOSE_OPTIONS "$target_qmgr_name" > /dev/null 2>&1
     
     if [ $? -eq 0 ]; then
         sleep 2
