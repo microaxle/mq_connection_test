@@ -114,24 +114,11 @@ if [ -n "$xmitq" ]; then
     fi
 fi
 
-# Display summary
-echo ""
-echo "=================================================================================="
-echo "                    QREMOTE ROUTING DISCOVERY SUMMARY"
-echo "=================================================================================="
-printf "%-25s %s\n" "Source QMgr:" "$source_qmgr"
-printf "%-25s %s\n" "Target Queue:" "$target_queue"
-printf "%-25s %s\n" "Target QMgr Name:" "$target_qmgr_name"
-printf "%-25s %s\n" "Actual Target QMgr:" "${rqmname:-Not found}"
-printf "%-25s %s\n" "amqsput Options:" "openOptions=$AMQSPUT_OPEN_OPTIONS, closeOptions=$AMQSPUT_CLOSE_OPTIONS"
-printf "%-25s %s\n" "Transmission Queue:" "${xmitq:-Not found} (Depth: $xmitq_depth)"
-printf "%-25s %s\n" "Sender Channel:" "${sender_channel:-Not found}"
-[ -n "$sender_channel" ] && printf "%-25s %s\n" "Sender Channel Status:" "$sender_status"
-echo "=================================================================================="
-echo ""
+# Step 4: Send test message if -s or -m flag is set (before displaying summary)
+test_msg_result=""
+test_msg_content=""
+test_msg_status=""
 
-# Send test message if -s or -m flag is set
-# Note: Message sending happens AFTER summary table - message content is NOT included in summary
 if [ "$SYNC_MODE" = "true" ]; then
     # Find amqsput utility
     amqsput_cmd=""
@@ -144,44 +131,67 @@ if [ "$SYNC_MODE" = "true" ]; then
     fi
     
     if [ -z "$amqsput_cmd" ]; then
-        echo "Error: amqsput utility not found"
-        exit 1
-    fi
-    
-    # Create test message - use custom message if provided, otherwise use default
-    if [ -n "$CUSTOM_MESSAGE" ]; then
-        test_msg="$CUSTOM_MESSAGE"
+        test_msg_result="FAILED"
+        test_msg_status="amqsput utility not found"
     else
-        test_msg="MQ_TEST_MSG|$(date '+%Y-%m-%d %H:%M:%S')|Queue:$target_queue|QMgr:$source_qmgr"
-    fi
-    
-    # Sync mode: send message and verify delivery
-    # This section is separate from the summary table above
-    echo ""
-    echo "--- Test Message Sending (separate from summary above) ---"
-    echo "Sending test message..."
-    depth_before="$xmitq_depth"
-    
-    # Send message (suppress output to avoid confusion)
-    printf "%s\n\n" "$test_msg" | "$amqsput_cmd" "$target_queue" "$source_qmgr" $AMQSPUT_OPEN_OPTIONS $AMQSPUT_CLOSE_OPTIONS "$target_qmgr_name" > /dev/null 2>&1
-    
-    if [ $? -eq 0 ]; then
-        sleep 2
-        depth_after=$(echo "DISPLAY QLOCAL('$xmitq') CURDEPTH" | runmqsc "$source_qmgr" 2>/dev/null | \
-            grep -i "^   CURDEPTH(" | sed 's/.*CURDEPTH(\([^)]*\)).*/\1/' | head -1)
-        [ -z "$depth_after" ] && depth_after="0"
-        
-        if [ "$depth_after" -gt "$depth_before" ]; then
-            echo "Test message sent successfully (Transmission Queue Depth: $depth_before -> $depth_after)"
+        # Create test message - use custom message if provided, otherwise use default
+        if [ -n "$CUSTOM_MESSAGE" ]; then
+            test_msg="$CUSTOM_MESSAGE"
         else
-            echo "Test message sent (may have been transmitted immediately)"
+            test_msg="MQ_TEST_MSG|$(date '+%Y-%m-%d %H:%M:%S')|Queue:$target_queue|QMgr:$source_qmgr"
         fi
-        echo "--- End of Test Message Sending ---"
-        echo ""
-    else
-        echo "Error: Failed to send test message"
-        echo "--- End of Test Message Sending ---"
-        echo ""
-        exit 1
+        
+        test_msg_content="$test_msg"
+        depth_before="$xmitq_depth"
+        
+        # Send message
+        printf "%s\n\n" "$test_msg" | "$amqsput_cmd" "$target_queue" "$source_qmgr" $AMQSPUT_OPEN_OPTIONS $AMQSPUT_CLOSE_OPTIONS "$target_qmgr_name" > /dev/null 2>&1
+        
+        if [ $? -eq 0 ]; then
+            sleep 2
+            depth_after=$(echo "DISPLAY QLOCAL('$xmitq') CURDEPTH" | runmqsc "$source_qmgr" 2>/dev/null | \
+                grep -i "^   CURDEPTH(" | sed 's/.*CURDEPTH(\([^)]*\)).*/\1/' | head -1)
+            [ -z "$depth_after" ] && depth_after="0"
+            
+            if [ "$depth_after" -gt "$depth_before" ]; then
+                test_msg_result="SUCCESS"
+                test_msg_status="Sent (Depth: $depth_before -> $depth_after)"
+            else
+                test_msg_result="SUCCESS"
+                test_msg_status="Sent (may have been transmitted immediately)"
+            fi
+        else
+            test_msg_result="FAILED"
+            test_msg_status="Failed to send message"
+        fi
     fi
 fi
+
+# Display summary
+echo ""
+echo "=================================================================================="
+echo "                         EDGE CONNECTION SUMMARY"
+echo "=================================================================================="
+printf "%-25s %s\n" "Source QMgr:" "$source_qmgr"
+printf "%-25s %s\n" "Target Queue:" "$target_queue"
+printf "%-25s %s\n" "Target QMgr Name:" "$target_qmgr_name"
+printf "%-25s %s\n" "Actual Target QMgr:" "${rqmname:-Not found}"
+printf "%-25s %s\n" "amqsput Options:" "openOptions=$AMQSPUT_OPEN_OPTIONS, closeOptions=$AMQSPUT_CLOSE_OPTIONS"
+printf "%-25s %s\n" "Transmission Queue:" "${xmitq:-Not found} (Depth: $xmitq_depth)"
+printf "%-25s %s\n" "Sender Channel:" "${sender_channel:-Not found}"
+[ -n "$sender_channel" ] && printf "%-25s %s\n" "Sender Channel Status:" "$sender_status"
+
+# Include test message result in summary table if -s flag was used
+if [ "$SYNC_MODE" = "true" ]; then
+    if [ "$test_msg_result" = "SUCCESS" ]; then
+        printf "%-25s %s\n" "Test Message:" "SUCCESS"
+        printf "%-25s %s\n" "Message Status:" "$test_msg_status"
+        printf "%-25s %s\n" "Message Content:" "$test_msg_content"
+    else
+        printf "%-25s %s\n" "Test Message:" "FAILED"
+        printf "%-25s %s\n" "Message Status:" "$test_msg_status"
+    fi
+fi
+
+echo "=================================================================================="
+echo ""
