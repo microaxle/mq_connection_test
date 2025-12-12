@@ -75,32 +75,18 @@ if [ -n "$xmitq" ]; then
         
         if echo "$chstatus" | grep -qiE "Channel Status not found|AMQ8420I"; then
             ping_result=$(echo "PING CHL('$sender_channel')" | runmqsc "$source_qmgr" 2>&1)
-            # Check for error codes (E) first - these are failures
-            ping_error=$(echo "$ping_result" | grep -oE "AMQ[0-9]+E[^I].*" | head -1 | sed 's/^[[:space:]]*//')
-            if [ -n "$ping_error" ]; then
-                sender_status="Channel is inactive (no error), ping result: FAILED ($ping_error)"
-            # Check for informational codes (I) or success indicators - these are good
-            elif echo "$ping_result" | grep -qiE "AMQ[0-9]+I|AMQ9514E|in use|ping successful|complete"; then
-                sender_status="Channel is inactive (no error), ping result: GOOD"
-            else
-                sender_status="Channel is inactive (no error), ping result: GOOD"
-            fi
+            ping_output=$(echo "$ping_result" | grep -oE "AMQ[0-9]+[EI].*" | head -1 | sed 's/^[[:space:]]*//')
+            [ -z "$ping_output" ] && ping_output="No ping response"
+            sender_status="Inactive, $ping_output"
         else
             chstate=$(echo "$chstatus" | grep -o "STATE([^)]*)" | sed 's/STATE(\(.*\))/\1/' | head -1)
             if echo "$chstate" | grep -qiE "^RUNNING$|^ACTIVE$"; then
-                sender_status="Channel is running"
+                sender_status="Running"
             else
                 ping_result=$(echo "PING CHL('$sender_channel')" | runmqsc "$source_qmgr" 2>&1)
-                # Check for error codes (E) first - these are failures
-                ping_error=$(echo "$ping_result" | grep -oE "AMQ[0-9]+E[^I].*" | head -1 | sed 's/^[[:space:]]*//')
-                if [ -n "$ping_error" ]; then
-                    sender_status="Channel is retrying (state: $chstate), ping result: FAILED ($ping_error)"
-                # Check for informational codes (I) or success indicators - these are good
-                elif echo "$ping_result" | grep -qiE "AMQ[0-9]+I|AMQ9514E|in use|ping successful|complete"; then
-                    sender_status="Channel is retrying (state: $chstate), ping result: GOOD"
-                else
-                    sender_status="Channel is retrying (state: $chstate), ping result: GOOD"
-                fi
+                ping_output=$(echo "$ping_result" | grep -oE "AMQ[0-9]+[EI].*" | head -1 | sed 's/^[[:space:]]*//')
+                [ -z "$ping_output" ] && ping_output="No ping response"
+                sender_status="$chstate, $ping_output"
             fi
         fi
     fi
