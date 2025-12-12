@@ -75,18 +75,40 @@ if [ -n "$xmitq" ]; then
         
         if echo "$chstatus" | grep -qiE "Channel Status not found|AMQ8420I"; then
             ping_result=$(echo "PING CHL('$sender_channel')" | runmqsc "$source_qmgr" 2>&1)
-            ping_output=$(echo "$ping_result" | grep -oE "AMQ[0-9]+[EI].*" | head -1 | sed 's/^[[:space:]]*//')
+            ping_output=$(echo "$ping_result" | grep -oE "AMQ[0-9]+[EI][^)]*" | head -1 | sed 's/^[[:space:]]*//')
             [ -z "$ping_output" ] && ping_output="No ping response"
             sender_status="Inactive, $ping_output"
         else
-            chstate=$(echo "$chstatus" | grep -o "STATE([^)]*)" | sed 's/STATE(\(.*\))/\1/' | head -1)
-            if echo "$chstate" | grep -qiE "^RUNNING$|^ACTIVE$"; then
+            # Extract STATE more carefully - only from lines that start with spaces (MQSC output format)
+            # Filter out the command echo line and channel name line to avoid false matches
+            chstate=$(echo "$chstatus" | grep "^   " | grep -v "^   DISPLAY\|^   CHANNEL\|'$sender_channel'" | \
+                grep -oE "STATE\([^)]+\)" | sed 's/STATE(\(.*\))/\1/' | head -1 | tr -d ' ')
+            # Also check STATUS field which might contain RUNNING
+            chstatus_val=$(echo "$chstatus" | grep "^   " | grep -v "^   DISPLAY\|^   CHANNEL\|'$sender_channel'" | \
+                grep -oE "STATUS\([^)]+\)" | sed 's/STATUS(\(.*\))/\1/' | head -1 | tr -d ' ')
+            
+            # Check if channel is running - look at both STATE and STATUS
+            # For a RUNNING sender channel, STATE should be RUNNING, not MQGET
+            if echo "$chstate" | grep -qiE "^RUNNING$|^ACTIVE$" || \
+               echo "$chstatus_val" | grep -qiE "^RUNNING$|^ACTIVE$"; then
                 sender_status="Running"
             else
+                # Channel is not in RUNNING/ACTIVE state - get ping result for diagnostics
                 ping_result=$(echo "PING CHL('$sender_channel')" | runmqsc "$source_qmgr" 2>&1)
-                ping_output=$(echo "$ping_result" | grep -oE "AMQ[0-9]+[EI].*" | head -1 | sed 's/^[[:space:]]*//')
+                # Extract only AMQ error/info codes, not other text
+                ping_output=$(echo "$ping_result" | grep -oE "AMQ[0-9]+[EI][^)]*" | head -1 | sed 's/^[[:space:]]*//')
                 [ -z "$ping_output" ] && ping_output="No ping response"
-                sender_status="$chstate, $ping_output"
+                # Use the actual state value, or status if state is empty
+                # Filter out any invalid state values like "MQGET" that shouldn't appear for sender channels
+                if [ -n "$chstate" ] && [ "$chstate" != "MQGET" ]; then
+                    sender_status="$chstate, $ping_output"
+                elif [ -n "$chstatus_val" ] && [ "$chstatus_val" != "MQGET" ]; then
+                    sender_status="$chstatus_val, $ping_output"
+                else
+                    # If we got MQGET or other unexpected value, just show ping result
+                    local state_display="${chstate:-${chstatus_val:-Unknown}}"
+                    sender_status="State: $state_display, $ping_output"
+                fi
             fi
         fi
     fi
@@ -109,6 +131,7 @@ echo "==========================================================================
 echo ""
 
 # Send test message if -s or -m flag is set
+# Note: Message sending happens AFTER summary table - message content is NOT included in summary
 if [ "$SYNC_MODE" = "true" ]; then
     # Find amqsput utility
     amqsput_cmd=""
@@ -133,9 +156,13 @@ if [ "$SYNC_MODE" = "true" ]; then
     fi
     
     # Sync mode: send message and verify delivery
+    # This section is separate from the summary table above
+    echo ""
+    echo "--- Test Message Sending (separate from summary above) ---"
     echo "Sending test message..."
     depth_before="$xmitq_depth"
     
+    # Send message (suppress output to avoid confusion)
     printf "%s\n\n" "$test_msg" | "$amqsput_cmd" "$target_queue" "$source_qmgr" $AMQSPUT_OPEN_OPTIONS $AMQSPUT_CLOSE_OPTIONS "$target_qmgr_name" > /dev/null 2>&1
     
     if [ $? -eq 0 ]; then
@@ -149,8 +176,12 @@ if [ "$SYNC_MODE" = "true" ]; then
         else
             echo "Test message sent (may have been transmitted immediately)"
         fi
+        echo "--- End of Test Message Sending ---"
+        echo ""
     else
         echo "Error: Failed to send test message"
+        echo "--- End of Test Message Sending ---"
+        echo ""
         exit 1
     fi
 fi
